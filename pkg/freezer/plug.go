@@ -16,12 +16,12 @@ import (
 
 const (
 	plugName    = "freezer"
-	plugVersion = "0.1.0"
+	plugVersion = "0.2.0"
 
-	defaultIdleTimeout        = 30 * time.Second
+	defaultIdleTimeout         = 30 * time.Second
 	defaultFreezeCheckInterval = 5 * time.Second
-	defaultReadyTimeout       = 10 * time.Second
-	defaultReadyPollInterval  = 100 * time.Millisecond
+	defaultReadyTimeout        = 10 * time.Second
+	defaultReadyPollInterval   = 100 * time.Millisecond
 )
 
 type freezeRequest struct {
@@ -43,6 +43,11 @@ type freezerPlug struct {
 	mu          sync.Mutex
 	frozen      bool
 	lastRequest time.Time
+
+	// fakeListener holds a TCP listener on the user-container port while the
+	// container is frozen. This keeps the queue-proxy's internal health probe
+	// succeeding so Knative continues routing traffic to the pod.
+	fakeListener net.Listener
 
 	cancelFreezeLoop context.CancelFunc
 }
@@ -79,6 +84,43 @@ func (p *freezerPlug) callFreezer(action string) error {
 	return nil
 }
 
+// startFakeListener binds a TCP listener on the user-container port.
+// After CRIU checkpoint the user process is dead and the port is free.
+// The queue-proxy's readiness probe (TCP connect to this port) will succeed,
+// keeping the pod Ready so Knative continues routing events to it.
+// Must be called with p.mu held.
+func (p *freezerPlug) startFakeListener() {
+	addr := "0.0.0.0:" + p.userPort
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		pi.Log.Errorf("Freezer: failed to start fake listener on %s: %v", addr, err)
+		return
+	}
+	p.fakeListener = ln
+	pi.Log.Infof("Freezer: fake listener started on %s (keeping pod Ready while frozen)", addr)
+
+	// Accept and immediately close connections (health probes).
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return // listener closed
+			}
+			conn.Close()
+		}
+	}()
+}
+
+// stopFakeListener closes the fake listener, freeing the port for the
+// real user-container after CRIU restore. Must be called with p.mu held.
+func (p *freezerPlug) stopFakeListener() {
+	if p.fakeListener != nil {
+		p.fakeListener.Close()
+		p.fakeListener = nil
+		pi.Log.Infof("Freezer: fake listener stopped (port released for restored container)")
+	}
+}
+
 // waitForAppReady polls the app container's TCP port until it accepts connections.
 func (p *freezerPlug) waitForAppReady() error {
 	addr := "localhost:" + p.userPort
@@ -98,6 +140,11 @@ func (p *freezerPlug) ApproveRequest(req *http.Request) (*http.Request, error) {
 	p.mu.Lock()
 	p.lastRequest = time.Now()
 	wasFrozen := p.frozen
+	if wasFrozen {
+		// Release the port before calling CRIU restore so the real
+		// user-container can bind to it again.
+		p.stopFakeListener()
+	}
 	p.mu.Unlock()
 
 	if wasFrozen {
@@ -153,6 +200,7 @@ func (p *freezerPlug) freezeLoop(ctx context.Context) {
 				} else {
 					p.mu.Lock()
 					p.frozen = true
+					p.startFakeListener()
 					p.mu.Unlock()
 				}
 			}
@@ -166,6 +214,7 @@ func (p *freezerPlug) Shutdown() {
 	}
 	p.mu.Lock()
 	frozen := p.frozen
+	p.stopFakeListener()
 	p.mu.Unlock()
 	if frozen {
 		if err := p.callFreezer("resume"); err != nil {
