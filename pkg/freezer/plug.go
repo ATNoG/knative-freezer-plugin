@@ -21,7 +21,7 @@ const (
 	defaultIdleTimeout         = 30 * time.Second
 	defaultFreezeCheckInterval = 5 * time.Second
 	defaultReadyTimeout        = 10 * time.Second
-	defaultReadyPollInterval   = 100 * time.Millisecond
+	defaultReadyPollInterval   = 1 * time.Millisecond
 )
 
 type freezeRequest struct {
@@ -126,7 +126,7 @@ func (p *freezerPlug) waitForAppReady() error {
 	addr := "localhost:" + p.userPort
 	deadline := time.Now().Add(defaultReadyTimeout)
 	for time.Now().Before(deadline) {
-		conn, err := net.DialTimeout("tcp", addr, defaultReadyPollInterval)
+		conn, err := net.DialTimeout("tcp", addr, 1*time.Millisecond)
 		if err == nil {
 			conn.Close()
 			return nil
