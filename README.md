@@ -2,7 +2,7 @@
 
 A custom Knative queue-proxy that automatically freezes idle serverless containers using CRIU checkpoint/restore and thaws them on incoming requests.
 
-This is the **queue-proxy plugin** component. It works together with the [container-freezer-criu](https://github.com/pmacoutinho/container-freezer-criu) daemon, which performs the actual CRIU checkpoint/restore operations.
+This is the **queue-proxy plugin** component. It works together with the [container-freezer-criu](https://github.com/ATNoG/container-freezer) daemon, which performs the actual CRIU checkpoint/restore operations.
 
 ## How It Works
 
@@ -46,7 +46,7 @@ The plugin is compiled into a custom Knative queue-proxy binary that replaces th
 
 ## Prerequisites
 
-- [container-freezer-criu](https://github.com/pmacoutinho/container-freezer-criu) daemon deployed on the cluster
+- [container-freezer-criu](https://github.com/ATNoG/container-freezer) daemon deployed on the cluster
 - Knative Serving installed
 - Docker buildx with a builder named `mec-builder`
 
@@ -136,9 +136,9 @@ Dockerfile         # Multi-stage build (Go 1.24 → distroless)
 
 ## Related
 
-- [container-freezer-criu](https://github.com/pmacoutinho/container-freezer-criu) — the CRIU checkpoint/restore daemon (companion component)
+- [container-freezer-criu](https://github.com/ATNoG/container-freezer) — the CRIU checkpoint/restore daemon (companion component)
 - [knative-extensions/security-guard](https://github.com/knative-extensions/security-guard) — QPOption plugin interface used by this plugin
 
 ## License
 
-See [LICENSE](LICENSE).
+This project is licensed under the [GNU General Public License v3.0](LICENSE).
