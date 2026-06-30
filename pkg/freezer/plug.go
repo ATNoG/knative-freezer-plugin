@@ -139,27 +139,29 @@ func (p *freezerPlug) waitForAppReady() error {
 func (p *freezerPlug) ApproveRequest(req *http.Request) (*http.Request, error) {
 	p.mu.Lock()
 	p.lastRequest = time.Now()
-	wasFrozen := p.frozen
-	if wasFrozen {
-		// Release the port before calling CRIU restore so the real
-		// user-container can bind to it again.
-		p.stopFakeListener()
+	if !p.frozen {
+		p.mu.Unlock()
+		return req, nil
 	}
+
+	// We're frozen — this goroutine will handle the restore.
+	// Set frozen=false before unlocking so concurrent requests skip
+	// the restore path and don't race on LoadAndDelete in the daemon.
+	p.stopFakeListener()
+	p.frozen = false
 	p.mu.Unlock()
 
-	if wasFrozen {
-		pi.Log.Infof("Freezer: thawing %s/%s before forwarding request", p.namespace, p.podName)
-		if err := p.callFreezer("resume"); err != nil {
-			pi.Log.Errorf("Freezer: thaw failed: %v", err)
-			// continue anyway — don't drop the request
-		} else {
-			if err := p.waitForAppReady(); err != nil {
-				pi.Log.Warnf("Freezer: %v", err)
-			}
-			p.mu.Lock()
-			p.frozen = false
-			p.mu.Unlock()
+	pi.Log.Infof("Freezer: thawing %s/%s before forwarding request", p.namespace, p.podName)
+	if err := p.callFreezer("resume"); err != nil {
+		pi.Log.Errorf("Freezer: thaw failed: %v", err)
+		// continue anyway — don't drop the request
+	} else {
+		if err := p.waitForAppReady(); err != nil {
+			pi.Log.Warnf("Freezer: %v", err)
 		}
+		p.mu.Lock()
+		p.lastRequest = time.Now() // reset idle timer after restore to prevent immediate re-freeze
+		p.mu.Unlock()
 	}
 
 	return req, nil
